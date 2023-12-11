@@ -41,8 +41,8 @@ class TMaRCo:
                 BartForConditionalGeneration.from_pretrained(expert_path,
                                                              forced_bos_token_id=self.tokenizer.bos_token_id))
 
-    def tokenize_function(self, examples):
-        return self.tokenizer(examples["comment_text"], max_length=1024, truncation=True)
+    def tokenize_function(self, examples, target_feature="comment_text"):
+        return self.tokenizer(examples[target_feature], max_length=1024, truncation=True)
 
     @staticmethod
     def group_texts(examples, block_size=128):
