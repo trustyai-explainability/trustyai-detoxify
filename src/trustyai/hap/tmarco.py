@@ -5,7 +5,7 @@ import numpy as np
 import torch
 from datasets import load_dataset, DatasetDict
 from scipy.spatial.distance import jensenshannon
-from transformers import BartForConditionalGeneration, BartTokenizer, Trainer, TrainingArguments, pipeline
+from transformers import BartForConditionalGeneration, BartTokenizer, Trainer, TrainingArguments, pipeline, Conversation
 from torch.nn.functional import softmax
 from torch import Tensor, topk
 
@@ -322,3 +322,28 @@ class TMaRCo:
                 text = incrementally_rephrased
                 idx += 1
         return incrementally_rephrased
+
+    def to_dict(self, t, s):
+        sd = dict()
+        ts = self.tokenizer.tokenize(t)
+        for idx in range(len(ts)):
+            sd[ts[idx][1:]] = s[idx]
+        return sd
+
+    def reflect(self, input, threshold=1.2):
+        scores = self.score(input)
+        mask = self.mask(input, scores=scores)
+        rephrased = self.rephrase(input, mask)
+        scores_dict = self.to_dict(input, scores)
+        bad_words = []
+        for t, s in scores_dict.items():
+            if s > threshold:
+                bad_words.append("'" + t + "'")
+        scored_words_text = ', '.join(bad_words)
+        reflection_prompt = f"Make sure the text '{input}' doesn't contain toxic content.\n"
+        reflection_prompt += f"The words {scored_words_text} are likely toxic.\n"
+        reflection_prompt += f"I suggest to rephrase it as '{rephrased}'.\n"
+        converse_pipeline = pipeline("conversational", model=self.base, tokenizer=self.tokenizer)
+        reflection_conversation = Conversation(reflection_prompt)
+        reflected_output = converse_pipeline([reflection_conversation])
+        return reflected_output.generated_responses[0]
