@@ -8,6 +8,7 @@ from scipy.spatial.distance import jensenshannon
 from transformers import BartForConditionalGeneration, BartTokenizer, Trainer, TrainingArguments, pipeline, Conversation
 from torch.nn.functional import softmax
 from torch import Tensor, topk
+import re
 
 
 class TMaRCo:
@@ -28,7 +29,7 @@ class TMaRCo:
         if base is not None:
             self.base = base
         else:
-            self.base = BartForConditionalGeneration.from_pretrained(base_model,
+            self.base = BartForConditionalGeneration.from_pretrained(base_model, max_length=150,
                                                                      forced_bos_token_id=self.tokenizer.bos_token_id)
 
         self.expert_weights = expert_weights
@@ -330,7 +331,7 @@ class TMaRCo:
             sd[ts[idx][1:]] = s[idx]
         return sd
 
-    def reflect(self, input, threshold=1.2):
+    def reflect(self, input, threshold=1.2, verbose=False):
         scores = self.score(input)
         mask = self.mask(input, scores=scores)
         rephrased = self.rephrase(input, mask)
@@ -340,10 +341,21 @@ class TMaRCo:
             if s > threshold:
                 bad_words.append("'" + t + "'")
         scored_words_text = ', '.join(bad_words)
-        reflection_prompt = f"Make sure the text '{input}' doesn't contain toxic content.\n"
-        reflection_prompt += f"The words {scored_words_text} are likely toxic.\n"
-        reflection_prompt += f"I suggest to rephrase it as '{rephrased}'.\n"
+        reflection_prompt = f"Detoxify '{input}'. "
+        rephrase_command = "You may rephrase it as"
+        reflection_prompt += f"The following words are toxic: {scored_words_text}. "
+        reflection_prompt += rephrase_command + f" '{rephrased}'."
         converse_pipeline = pipeline("conversational", model=self.base, tokenizer=self.tokenizer)
         reflection_conversation = Conversation(reflection_prompt)
         reflected_output = converse_pipeline([reflection_conversation])
-        return reflected_output.generated_responses[0]
+        if verbose:
+            print(f'{reflected_output}')
+        reflected_texts = []
+        for generated_response in reflected_output.generated_responses:
+            # TODO: proper parsing needed
+            if rephrase_command in generated_response:
+                gras = generated_response[generated_response.index(rephrase_command) + len(rephrase_command):]
+                reflected_texts.append(gras)
+            else:
+                reflected_texts.append(generated_response)
+        return reflected_texts
