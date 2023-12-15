@@ -333,7 +333,7 @@ class TMaRCo:
 
     def reflect(self, input, threshold=1.2, verbose=False):
         scores = self.score(input)
-        mask = self.mask(input, scores=scores)
+        mask = self.mask(input, scores=scores, threshold=threshold)
         rephrased = self.rephrase(input, mask)
         scores_dict = self.to_dict(input, scores)
         bad_words = []
