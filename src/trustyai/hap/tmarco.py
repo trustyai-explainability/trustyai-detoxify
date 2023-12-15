@@ -311,7 +311,7 @@ class TMaRCo:
             if len(text.strip()) == 0:
                 break
             scores = self.score(text, verbose=verbose)
-            if all(scores) < threshold:
+            if min(scores) > threshold:
                 break
             masked = self.mask(text, scores=scores, threshold=threshold)
             incrementally_rephrased = self.rephrase(text, masked, verbose=verbose)
