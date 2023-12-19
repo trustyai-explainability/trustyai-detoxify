@@ -1,5 +1,5 @@
 import pandas as pd
-from trustyai.hap import TMaRCo
+from trustyai.detoxify import TMaRCo
 
 import numpy as np
 from tqdm import tqdm
