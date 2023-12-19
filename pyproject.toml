@@ -1,7 +1,7 @@
 [project]
-name = "trustyai-hap"
+name = "trustyai-detoxify"
 version = "0.0.1"
-description = "TrustyAI tools for HAP detection and remedy."
+description = "TrustyAI tools for content detoxification."
 authors = [{ name = "Tommaso Teofili", email = "tteofili@redhat.com" }]
 license = { text = "Apache License Version 2.0" }
 readme = "README.md"
@@ -39,8 +39,8 @@ extras = [
 ]
 
 [project.urls]
-homepage = "https://github.com/trustyai-explainability/trustyai-hap"
-repository = "https://github.com/trustyai-explainability/trustyai-hap"
+homepage = "https://github.com/trustyai-explainability/trustyai-detoxify"
+repository = "https://github.com/trustyai-explainability/trustyai-detoxify"
 
 [build-system]
 requires = ["setuptools>=45", "setuptools_scm[toml]>=6.2"]
