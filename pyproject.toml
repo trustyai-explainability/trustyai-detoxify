@@ -22,7 +22,7 @@ classifiers = [
 ]
 
 dependencies = [
-    "transformers==4.30.0",
+    "transformers~=4.36.2",
     "datasets",
     "scipy",
     "torch",
