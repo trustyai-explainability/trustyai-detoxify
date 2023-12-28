@@ -5,11 +5,12 @@ import numpy as np
 import torch
 from datasets import load_dataset, DatasetDict
 from scipy.spatial.distance import jensenshannon
-from transformers import BartForConditionalGeneration, BartTokenizer, Trainer, TrainingArguments, pipeline, Conversation
+from transformers import AutoTokenizer, Trainer, TrainingArguments, pipeline, AutoModelForCausalLM, \
+    BartForConditionalGeneration, BartTokenizer, AutoModelForSeq2SeqLM, Conversation
 from torch.nn.functional import softmax
 from torch import Tensor, topk
-import re
 
+default_model = "facebook/bart-large"
 
 class TMaRCo:
     base = None
@@ -17,33 +18,52 @@ class TMaRCo:
     expert_weights = []
     tokenizer = None
 
-    def __init__(self, base=None, expert_weights=None, tokenizer=None, base_model="facebook/bart-large"):
+    def __init__(self, base_model=None, expert_weights=None, tokenizer=None, max_length=150,
+                 model_type: str = 'causal_lm'):
         if expert_weights is None:
             expert_weights = [-0.5, 0.5]
+        self.expert_weights = expert_weights
 
-        if tokenizer is None:
-            self.tokenizer = BartTokenizer.from_pretrained(base_model, is_split_into_words=True,
+        if isinstance(tokenizer, str):
+            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer, is_split_into_words=True,
+                                                           add_prefix_space=True)
+            self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
+        elif tokenizer is not None:
+            self.tokenizer = tokenizer
+        else:
+            self.tokenizer = BartTokenizer.from_pretrained(default_model, is_split_into_words=True,
                                                            add_prefix_space=True)
             self.tokenizer.pad_token_id = self.tokenizer.eos_token_id
 
-        if base is not None:
-            self.base = base
+        if isinstance(base_model, str):
+            if model_type == 'seq2seq_lm':
+                self.base = AutoModelForSeq2SeqLM.from_pretrained(base_model, max_length=max_length,
+                                                                  forced_bos_token_id=self.tokenizer.bos_token_id)
+            elif model_type == 'causal_lm':
+                self.base = AutoModelForCausalLM.from_pretrained(base_model, max_length=max_length,
+                                                                 forced_bos_token_id=self.tokenizer.bos_token_id)
+            else:
+                raise Exception(f'unsupported model type {model_type}')
+        elif base_model is not None:
+            self.base = base_model
         else:
-            self.base = BartForConditionalGeneration.from_pretrained(base_model, max_length=150,
+            self.base = BartForConditionalGeneration.from_pretrained(default_model, max_length=max_length,
                                                                      forced_bos_token_id=self.tokenizer.bos_token_id)
+        self.content_feature = "comment_text"
 
-        self.expert_weights = expert_weights
-
-    def load_models(self, expert_paths: list, expert_weights: list = None):
+    def load_models(self, experts: list, expert_weights: list = None):
         if expert_weights is not None:
             self.expert_weights = expert_weights
-        for expert_path in expert_paths:
-            self.experts.append(
-                BartForConditionalGeneration.from_pretrained(expert_path,
-                                                             forced_bos_token_id=self.tokenizer.bos_token_id))
+        expert_models = []
+        for expert in experts:
+            if isinstance(expert, str):
+                expert = BartForConditionalGeneration.from_pretrained(expert,
+                                                                      forced_bos_token_id=self.tokenizer.bos_token_id)
+            expert_models.append(expert)
+        self.experts = expert_models
 
-    def tokenize_function(self, examples, target_feature="comment_text"):
-        return self.tokenizer(examples[target_feature], max_length=1024, truncation=True)
+    def tokenize_function(self, examples):
+        return self.tokenizer(examples[self.content_feature], max_length=1024, truncation=True)
 
     @staticmethod
     def group_texts(examples, block_size=128):
@@ -73,7 +93,9 @@ class TMaRCo:
 
     def train_models(self, dataset_name: str = 'jigsaw_toxicity_pred', perc: int = 100, expert_feature: str = 'toxic',
                      data_dir: str = 'jigsaw-toxic-comment-classification-challenge', td_columns=None,
-                     base_model="facebook/bart-large"):
+                     base_model=default_model, content_feature: str = "comment_text", model_type: str = 'causal_lm'):
+
+        self.content_feature = content_feature
 
         if td_columns is None:
             td_columns = ["comment_text", 'toxic', 'severe_toxic', 'obscene', 'threat', 'insult',
@@ -96,8 +118,12 @@ class TMaRCo:
             num_proc=4,
         )
 
-        gminus = BartForConditionalGeneration.from_pretrained(base_model,
-                                                              forced_bos_token_id=self.tokenizer.bos_token_id)
+        if model_type == 'causal_lm':
+            gminus = AutoModelForCausalLM.from_pretrained(base_model, forced_bos_token_id=self.tokenizer.bos_token_id)
+        elif model_type == 'seq2seq_lm':
+            gminus = AutoModelForSeq2SeqLM.from_pretrained(base_model, forced_bos_token_id=self.tokenizer.bos_token_id)
+        else:
+            raise Exception(f'unsupported model type {model_type}')
 
         training_args = TrainingArguments(
             "gminus",
@@ -132,8 +158,12 @@ class TMaRCo:
             num_proc=4,
         )
 
-        gplus = BartForConditionalGeneration.from_pretrained(base_model,
-                                                             forced_bos_token_id=self.tokenizer.bos_token_id)
+        if model_type == 'causal_lm':
+            gplus = AutoModelForCausalLM.from_pretrained(base_model, forced_bos_token_id=self.tokenizer.bos_token_id)
+        elif model_type == 'seq2seq_lm':
+            gplus = AutoModelForSeq2SeqLM.from_pretrained(base_model, forced_bos_token_id=self.tokenizer.bos_token_id)
+        else:
+            raise Exception(f'unsupported model type {model_type}')
 
         nt_training_args = TrainingArguments(
             "gplus",
@@ -231,7 +261,7 @@ class TMaRCo:
                 rephrased_token_id = argmaxed
                 rephrased_tokens_ids.append(rephrased_token_id)
             else:
-                rephrased_tokens_ids.append(self.tokenizer._convert_token_to_id(masked_sentence_tokens[idx]))
+                rephrased_tokens_ids.append(self.tokenizer.convert_tokens_to_ids([masked_sentence_tokens[idx]])[0])
         return self.tokenizer.decode(rephrased_tokens_ids, clean_up_tokenization_spaces=True, skip_special_tokens=True)
 
     def print_token(self, token_logits):
@@ -341,7 +371,7 @@ class TMaRCo:
             if s > threshold:
                 bad_words.append("'" + t + "'")
         scored_words_text = ', '.join(bad_words)
-        reflection_prompt = f"Detoxify '{input}'. "
+        reflection_prompt = f"Make sure the text '{input}' doesn't contain toxic content.\n"
         rephrase_command = "You may rephrase it as"
         reflection_prompt += f"The following words are toxic: {scored_words_text}. "
         reflection_prompt += rephrase_command + f" '{rephrased}'."
