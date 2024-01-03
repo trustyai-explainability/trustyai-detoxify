@@ -15,12 +15,16 @@ if __name__ == '__main__':
     parser.add_argument("--diff", type=str, default='')
     parser.add_argument("--models", type=str, nargs='+', default=['trustyai/gminus', 'trustyai/gplus'])
     parser.add_argument("--weights", type=float, nargs='+', default=[-0.9, 2.5])
+    parser.add_argument("--kind", type=str, default='rephrase', choices=['reflect', 'rephrase'])
+    parser.add_argument("--chat_model", type=str)
     args = parser.parse_args()
 
     tqdm.pandas()
     tmarco = TMaRCo(expert_weights=args.weights)
     tmarco.load_models(args.models)
     data = pd.read_csv(args.csv)[:args.samples]
+    kind = args.kind
+    chat_model = args.chat_model
     print(data.shape)
     new_rows = []
     changes = []
@@ -31,7 +35,15 @@ if __name__ == '__main__':
         for c in nr.index:
             if data[c].dtype != np.number:
                 value = nr[c]
-                detoxified = tmarco.rephrase(value, tmarco.mask(value), combine_original=True)
+                if kind == 'rephrase':
+                    detoxified = tmarco.rephrase(value, tmarco.mask(value), combine_original=True)
+                elif kind == 'reflect':
+                    if chat_model is not None:
+                        detoxified = tmarco.reflect(value, chat_model=chat_model)[0]
+                    else:
+                        detoxified = tmarco.reflect(value)[0]
+                else:
+                    raise Exception(f'unexpected kind "{kind}"')
                 nr[c] = detoxified
                 changes.append({'original': value, 'rephrased': detoxified})
         new_rows.append(nr)
