@@ -94,7 +94,8 @@ class TMaRCo:
 
     def train_models(self, dataset_name: str = 'jigsaw_toxicity_pred', perc: int = 100, expert_feature: str = 'toxic',
                      data_dir: str = 'jigsaw-toxic-comment-classification-challenge', td_columns=None,
-                     base_model=default_model, content_feature: str = "comment_text", model_type: str = 'causal_lm'):
+                     base_model=default_model, content_feature: str = "comment_text", model_type=None,
+                     model_prefix: str = 'g_'):
 
         self.content_feature = content_feature
 
@@ -119,7 +120,10 @@ class TMaRCo:
             num_proc=4,
         )
 
-        if model_type == 'causal_lm':
+        if model_type is None:
+            gminus = BartForConditionalGeneration.from_pretrained(base_model,
+                                                                  forced_bos_token_id=self.tokenizer.bos_token_id)
+        elif model_type == 'causal_lm':
             gminus = AutoModelForCausalLM.from_pretrained(base_model, forced_bos_token_id=self.tokenizer.bos_token_id)
         elif model_type == 'seq2seq_lm':
             gminus = AutoModelForSeq2SeqLM.from_pretrained(base_model, forced_bos_token_id=self.tokenizer.bos_token_id)
@@ -127,7 +131,7 @@ class TMaRCo:
             raise Exception(f'unsupported model type {model_type}')
 
         training_args = TrainingArguments(
-            "gminus",
+            model_prefix + "minus",
             evaluation_strategy="epoch",
             learning_rate=2e-5,
             weight_decay=0.01
@@ -144,7 +148,7 @@ class TMaRCo:
 
         eval_results = trainer.evaluate()
         print(f"G- perplexity: {math.exp(eval_results['eval_loss']):.2f}")
-        trainer.save_model('gminus')
+        trainer.save_model(model_prefix + 'minus')
 
         # train gplus model
         nontoxic_datasets = datasets_split.filter(lambda x: int(x[expert_feature]) == 0)
@@ -159,7 +163,10 @@ class TMaRCo:
             num_proc=4,
         )
 
-        if model_type == 'causal_lm':
+        if model_type is None:
+            gplus = BartForConditionalGeneration.from_pretrained(base_model,
+                                                                 forced_bos_token_id=self.tokenizer.bos_token_id)
+        elif model_type == 'causal_lm':
             gplus = AutoModelForCausalLM.from_pretrained(base_model, forced_bos_token_id=self.tokenizer.bos_token_id)
         elif model_type == 'seq2seq_lm':
             gplus = AutoModelForSeq2SeqLM.from_pretrained(base_model, forced_bos_token_id=self.tokenizer.bos_token_id)
@@ -167,7 +174,7 @@ class TMaRCo:
             raise Exception(f'unsupported model type {model_type}')
 
         nt_training_args = TrainingArguments(
-            "gplus",
+            model_prefix + "plus",
             evaluation_strategy="epoch",
             learning_rate=2e-5,
             weight_decay=0.01,
@@ -187,7 +194,7 @@ class TMaRCo:
         print(f"G+ perplexity: {math.exp(nt_eval_results['eval_loss']):.2f}")
         print('training finished')
 
-        nt_trainer.save_model('gplus')
+        nt_trainer.save_model(model_prefix + 'plus')
         self.experts = [gminus, gplus]
 
     def mask(self, sentence: str, threshold: float = 1.2, normalize: bool = True, use_logits: bool = True,
@@ -434,7 +441,7 @@ class TMaRCo:
                     ]
                 else:
                     user_prompt = user_prompt.format(input=input, scored_words_text=scored_words_text,
-                                                           rephrased=rephrased, toxic_trait=toxic_trait)
+                                                     rephrased=rephrased, toxic_trait=toxic_trait)
                     system_prompt = system_prompt.format(toxic_trait=toxic_trait)
                     messages = [
                         {
