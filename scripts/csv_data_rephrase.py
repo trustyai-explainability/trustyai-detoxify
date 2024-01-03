@@ -39,7 +39,7 @@ if __name__ == '__main__':
                     detoxified = tmarco.rephrase(value, tmarco.mask(value), combine_original=True)
                 elif kind == 'reflect':
                     if chat_model is not None:
-                        detoxified = tmarco.reflect(value, chat_model=chat_model)[0]
+                        detoxified = tmarco.reflect(value, chat_model=chat_model, conversation_type='chat')[0]
                     else:
                         detoxified = tmarco.reflect(value)[0]
                 else:
