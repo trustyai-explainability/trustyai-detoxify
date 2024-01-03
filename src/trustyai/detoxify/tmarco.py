@@ -12,6 +12,7 @@ from torch import Tensor, topk
 
 default_model = "facebook/bart-large"
 
+
 class TMaRCo:
     base = None
     experts = []
@@ -361,31 +362,122 @@ class TMaRCo:
             sd[ts[idx][1:]] = s[idx]
         return sd
 
-    def reflect(self, input, threshold=1.2, verbose=False):
+    default_user_prompt = (
+        'In the text "{input}", the following words are considered {toxic_trait}: {scored_words_text}. '
+        'How should the text "{input}" be adjusted to make it non-{toxic_trait} (e.g. "{rephrased}")?')
+    default_system_prompt = "You are a taciturn chatbot for removing {toxic_trait}, harmful and abusive language."
+
+    def reflect(self, input, threshold=1.2, verbose=False, messages=None, user_prompt=default_user_prompt,
+                system_prompt: str = default_system_prompt, chat_model=None, chat_tokenizer=None,
+                toxic_trait="toxic", end_tag="<|", conversation_type: str = 'rephrase', chat_template=None,
+                chain_of_thought: bool = False):
         scores = self.score(input)
         mask = self.mask(input, scores=scores, threshold=threshold)
         rephrased = self.rephrase(input, mask)
         scores_dict = self.to_dict(input, scores)
-        bad_words = []
+        toxic_words = []
         for t, s in scores_dict.items():
             if s > threshold:
-                bad_words.append("'" + t + "'")
-        scored_words_text = ', '.join(bad_words)
-        reflection_prompt = f"Make sure the text '{input}' doesn't contain toxic content.\n"
-        rephrase_command = "You may rephrase it as"
-        reflection_prompt += f"The following words are toxic: {scored_words_text}. "
-        reflection_prompt += rephrase_command + f" '{rephrased}'."
-        converse_pipeline = pipeline("conversational", model=self.base, tokenizer=self.tokenizer)
-        reflection_conversation = Conversation(reflection_prompt)
-        reflected_output = converse_pipeline([reflection_conversation])
-        if verbose:
-            print(f'{reflected_output}')
-        reflected_texts = []
-        for generated_response in reflected_output.generated_responses:
-            # TODO: proper parsing needed
-            if rephrase_command in generated_response:
-                gras = generated_response[generated_response.index(rephrase_command) + len(rephrase_command):]
-                reflected_texts.append(gras)
+                toxic_words.append("'" + t + "'")
+        scored_words_text = ', '.join(toxic_words)
+
+        if chat_model is None:
+            chat_model = self.base
+            chat_tokenizer = self.tokenizer
+        else:
+            if chat_tokenizer is None:
+                chat_tokenizer = AutoTokenizer.from_pretrained(chat_model)
             else:
-                reflected_texts.append(generated_response)
+                chat_tokenizer = chat_tokenizer
+
+        if chat_template is not None:
+            chat_tokenizer.chat_template = chat_template
+
+        converse_pipeline = pipeline("conversational", model=chat_model, tokenizer=chat_tokenizer)
+
+        if conversation_type == 'chat':
+            if messages is None:
+                if chain_of_thought:
+                    system_prompt = system_prompt.format(toxic_trait=toxic_trait)
+                    user1 = 'In the text "{input}", which words are considered {toxic_trait}?'.format(input=input,
+                                                                                                      toxic_trait=toxic_trait)
+                    assistant1 = scored_words_text
+                    user2 = 'How could the text "{input}" be adjusted to make it non-{toxic_trait}?'.format(input=input,
+                                                                                                            toxic_trait=toxic_trait)
+                    user3 = 'How could the text "{input}" be adjusted to make it non-{toxic_trait}?'.format(
+                        input=input, toxic_trait=toxic_trait)
+                    messages = [
+                        {
+                            "role": "system",
+                            "content": system_prompt,
+                        },
+                        {
+                            "role": "user",
+                            "content": user1
+                        },
+                        {
+                            "role": "assistant",
+                            "content": assistant1
+                        },
+                        {
+                            "role": "user",
+                            "content": user2
+                        },
+                        {
+                            "role": "assistant",
+                            "content": rephrased
+                        },
+                        {
+                            "role": "user",
+                            "content": user3
+                        },
+                    ]
+                else:
+                    user_prompt = user_prompt.format(input=input, scored_words_text=scored_words_text,
+                                                           rephrased=rephrased, toxic_trait=toxic_trait)
+                    system_prompt = system_prompt.format(toxic_trait=toxic_trait)
+                    messages = [
+                        {
+                            "role": "system",
+                            "content": system_prompt,
+                        },
+                        {
+                            "role": "user",
+                            "content": user_prompt
+                        },
+                    ]
+            else:
+                formatted_messages = []
+                for message in messages:
+                    formatted_messages.append(message.format(input=input, scored_words_text=scored_words_text,
+                                                             rephrased=rephrased, toxic_trait=toxic_trait))
+                messages = formatted_messages
+            conversation_output = converse_pipeline(messages, pad_token_id=converse_pipeline.tokenizer.eos_token_id)
+            if verbose:
+                print(f'chat conversation:\n{conversation_output}')
+            reflected_texts = [conversation_output.messages[-1]['content']]
+        elif conversation_type == 'rephrase':
+            user_prompt = f"Make sure the text '{input}' doesn't contain {toxic_trait} content.\n"
+            rephrase_command = "You may rephrase it as"
+            user_prompt += f"The following words are {toxic_trait}: {scored_words_text}. "
+            user_prompt += rephrase_command + f" '{rephrased}'."
+            reflection_conversation = Conversation(user_prompt)
+            reflected_output = converse_pipeline([reflection_conversation],
+                                                 pad_token_id=converse_pipeline.tokenizer.eos_token_id)
+            if verbose:
+                print(f'{reflected_output}')
+            reflected_texts = []
+            for generated_response in reflected_output.generated_responses:
+                if rephrase_command in generated_response and end_tag in generated_response:
+                    start_index = generated_response.index(rephrase_command) + len(rephrase_command)
+                    end_index = generated_response.index(end_tag, start_index)
+                    if 0 < start_index < end_index:
+                        gras = generated_response[start_index:end_index]
+                        reflected_texts.append(gras)
+                    else:
+                        reflected_texts.append(generated_response)
+                else:
+                    reflected_texts.append(generated_response)
+        else:
+            raise Exception(f"unsupported conversation type '{conversation_type}'")
         return reflected_texts
