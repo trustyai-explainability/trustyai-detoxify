@@ -197,19 +197,23 @@ class TMaRCo:
         nt_trainer.save_model(model_prefix + 'plus')
         self.experts = [gminus, gplus]
 
-    def mask(self, sentence: str, threshold: float = 1.2, normalize: bool = True, use_logits: bool = True,
+    def mask(self, sentences: list, threshold: float = 1.2, normalize: bool = True, use_logits: bool = True,
              scores: list = None):
+        masked_sentences = []
         if scores is None:
-            scores = self.score(sentence, use_logits=use_logits, normalize=normalize)
-        tokens = self.tokenizer.tokenize(sentence)
-        masked_output = []
-        for idx in range(len(tokens)):
-            if scores[idx] > threshold:
-                masked_output.append(self.tokenizer.mask_token)
-            else:
-                masked_output.append(tokens[idx])
-        masked_sentence = self.tokenizer.convert_tokens_to_string(masked_output)
-        return masked_sentence
+            scores = self.score(sentences, use_logits=use_logits, normalize=normalize)
+        for s_idx in range(len(sentences)):
+            sentence = sentences[s_idx]
+            tokens = self.tokenizer.tokenize(sentence)
+            masked_output = []
+            for idx in range(len(tokens)):
+                if scores[s_idx][idx] > threshold:
+                    masked_output.append(self.tokenizer.mask_token)
+                else:
+                    masked_output.append(tokens[idx])
+            masked_sentence = self.tokenizer.convert_tokens_to_string(masked_output)
+            masked_sentences.append(masked_sentence)
+        return masked_sentences
 
     @staticmethod
     def compute_mask_probs(fmp, text_sentence):
@@ -220,57 +224,77 @@ class TMaRCo:
         token_scores = [e[1] for e in token_scores]
         return token_ids, token_scores
 
-    def rephrase(self, original, masked_output, compute_probs: bool = False, verbose: bool = False,
-                 combine_original: bool = False, expert_weights: list = None):
+    def rephrase(self, originals: list, scores: list = None, masked_outputs: list = None, compute_probs: bool = False,
+                 verbose: bool = False, combine_original: bool = False, expert_weights: list = None,
+                 conditional: bool = True, threshold: float = 1.2):
+        rephrased_texts = []
         if expert_weights is None:
             expert_weights = self.expert_weights
-        base_logits = self.compute_mask_logits(self.base, original, mask=False)
-        rephrased_tokens_ids = []
-        masked_sentence_tokens = self.tokenizer.tokenize(masked_output)
-        if combine_original:
-            original_sentence_tokens = self.tokenizer(original)["input_ids"][1:-1]
-        fmp_experts = []
-        if compute_probs:
-            for expert in self.experts:
-                fmp_experts.append(pipeline("fill-mask", model=expert, tokenizer=self.tokenizer,
-                                            top_k=self.tokenizer.vocab_size))
-        for idx in range(len(masked_sentence_tokens)):
-            if masked_sentence_tokens[idx] == self.tokenizer.mask_token:
-                next_token_logits = base_logits[0, 1 + idx]
-                if verbose:
-                    self.print_token(next_token_logits)
-                expert_logits = []
-                current_sentence_ids = rephrased_tokens_ids + [self.tokenizer.mask_token_id]
-                if combine_original and idx < len(masked_sentence_tokens) - 2:
-                    current_sentence_ids = current_sentence_ids + original_sentence_tokens[idx + 1:]
-                    if verbose:
-                        print(self.tokenizer.convert_ids_to_tokens(current_sentence_ids))
-                if compute_probs:
-                    masked_sentence = self.tokenizer.convert_tokens_to_string(
-                        self.tokenizer.convert_ids_to_tokens(current_sentence_ids))
-                    for expert in fmp_experts:
-                        _, scores = self.compute_mask_probs(expert, masked_sentence)
-                        expert_logits.append(scores)
-                    for eidx in range(len(expert_logits)):
-                        tensor = Tensor(expert_logits[eidx])
-                        next_token_logits *= expert_weights[eidx] * tensor
-                    log_prob = next_token_logits
-                else:
-                    masked_sequence = self.tokenizer.convert_tokens_to_string(
-                        self.tokenizer.convert_ids_to_tokens(current_sentence_ids))
-                    eidx = 0
-                    for expert in self.experts:
-                        next_token_logits += expert_weights[eidx] * self.compute_mask_logits(expert, masked_sequence)
-                        eidx += 1
-                    log_prob = next_token_logits
-                if verbose:
-                    self.print_token(next_token_logits)
-                argmaxed = np.argmax(log_prob).item()
-                rephrased_token_id = argmaxed
-                rephrased_tokens_ids.append(rephrased_token_id)
+        if scores is None:
+            scores = self.score(originals)
+        if masked_outputs is None:
+            masked_outputs = self.mask(originals, scores=scores)
+        for in_idx in range(len(originals)):
+            original = originals[in_idx]
+            if conditional:
+                if min(scores) <= threshold:
+                    # do not rephrase if all scores are below the threshold
+                    rephrased_texts.append(original)
+                    continue
+            if len(original.strip()) == 0:
+                rephrased_texts.append(original)
             else:
-                rephrased_tokens_ids.append(self.tokenizer.convert_tokens_to_ids([masked_sentence_tokens[idx]])[0])
-        return self.tokenizer.decode(rephrased_tokens_ids, clean_up_tokenization_spaces=True, skip_special_tokens=True)
+                base_logits = self.compute_mask_logits(self.base, original, mask=False)
+                rephrased_tokens_ids = []
+                masked_sentence_tokens = self.tokenizer.tokenize(masked_outputs[in_idx])
+                if combine_original:
+                    original_sentence_tokens = self.tokenizer(original)["input_ids"][1:-1]
+                fmp_experts = []
+                if compute_probs:
+                    for expert in self.experts:
+                        fmp_experts.append(pipeline("fill-mask", model=expert, tokenizer=self.tokenizer,
+                                                    top_k=self.tokenizer.vocab_size))
+                for idx in range(len(masked_sentence_tokens)):
+                    if masked_sentence_tokens[idx] == self.tokenizer.mask_token:
+                        next_token_logits = base_logits[0, 1 + idx]
+                        if verbose:
+                            self.print_token(next_token_logits)
+                        expert_logits = []
+                        current_sentence_ids = rephrased_tokens_ids + [self.tokenizer.mask_token_id]
+                        if combine_original and idx < len(masked_sentence_tokens) - 2:
+                            current_sentence_ids = current_sentence_ids + original_sentence_tokens[idx + 1:]
+                            if verbose:
+                                print(self.tokenizer.convert_ids_to_tokens(current_sentence_ids))
+                        if compute_probs:
+                            masked_sentence = self.tokenizer.convert_tokens_to_string(
+                                self.tokenizer.convert_ids_to_tokens(current_sentence_ids))
+                            for expert in fmp_experts:
+                                _, scores = self.compute_mask_probs(expert, masked_sentence)
+                                expert_logits.append(scores)
+                            for eidx in range(len(expert_logits)):
+                                tensor = Tensor(expert_logits[eidx])
+                                next_token_logits *= expert_weights[eidx] * tensor
+                            log_prob = next_token_logits
+                        else:
+                            masked_sequence = self.tokenizer.convert_tokens_to_string(
+                                self.tokenizer.convert_ids_to_tokens(current_sentence_ids))
+                            eidx = 0
+                            for expert in self.experts:
+                                next_token_logits += expert_weights[eidx] * self.compute_mask_logits(expert,
+                                                                                                     masked_sequence)
+                                eidx += 1
+                            log_prob = next_token_logits
+                        if verbose:
+                            self.print_token(next_token_logits)
+                        argmaxed = np.argmax(log_prob).item()
+                        rephrased_token_id = argmaxed
+                        rephrased_tokens_ids.append(rephrased_token_id)
+                    else:
+                        rephrased_tokens_ids.append(
+                            self.tokenizer.convert_tokens_to_ids([masked_sentence_tokens[idx]])[0])
+                rephrased_texts.append(self.tokenizer.decode(rephrased_tokens_ids, clean_up_tokenization_spaces=True,
+                                                             skip_special_tokens=True))
+        return rephrased_texts
 
     def print_token(self, token_logits):
         log_prob = softmax(token_logits, dim=0)
@@ -315,32 +339,37 @@ class TMaRCo:
             else:
                 return model.forward(**subseq_ids).logits
 
-    def score(self, sentence, use_logits: bool = True, normalize: bool = True, verbose: bool = False):
-        # TODO : verify presence of pad_token
-        masked_sentences = self.mask_tokens(sentence, self.tokenizer.pad_token + self.tokenizer.mask_token)
-        distributions = []
-        for model in self.experts:
-            if use_logits:
-                logits = self.compute_mask_logits_multiple(model, masked_sentences, verbose=verbose)
-                mask_substitution_scores = softmax(logits, dim=1)
+    def score(self, sentences: list, use_logits: bool = True, normalize: bool = True, verbose: bool = False):
+        scores = []
+        for sentence in sentences:
+            masked_sentences = self.mask_tokens(sentence, self.tokenizer.pad_token + self.tokenizer.mask_token)
+            if len(masked_sentences) == 0:
+                scores.append([])
             else:
-                mask_substitution_scores = []
-                fmp = pipeline("fill-mask", model=model, tokenizer=self.tokenizer, top_k=10)
-                for masked_sentence in masked_sentences:
-                    # approximated probabilities for top_k tokens
-                    distr = fmp(masked_sentence)
-                    mask_substitution_score = [x['score'] for x in distr]
-                    mask_substitution_scores.append(mask_substitution_score.numpy())
-            distributions.append(mask_substitution_scores)
-        distr_pairs = itertools.combinations(distributions, 2)
-        js_distances = []
-        for distr_pair in distr_pairs:
-            js_distance = jensenshannon(distr_pair[0], distr_pair[1], axis=1)
-            if normalize:
-                js_distance = js_distance / np.average(js_distance)
-            js_distances.append(js_distance)
-        js_distance = np.average(js_distances, axis=0)
-        return js_distance
+                distributions = []
+                for model in self.experts:
+                    if use_logits:
+                        logits = self.compute_mask_logits_multiple(model, masked_sentences, verbose=verbose)
+                        mask_substitution_scores = softmax(logits, dim=1)
+                    else:
+                        mask_substitution_scores = []
+                        fmp = pipeline("fill-mask", model=model, tokenizer=self.tokenizer, top_k=10)
+                        for masked_sentence in masked_sentences:
+                            # approximated probabilities for top_k tokens
+                            distr = fmp(masked_sentence)
+                            mask_substitution_score = [x['score'] for x in distr]
+                            mask_substitution_scores.append(mask_substitution_score.numpy())
+                    distributions.append(mask_substitution_scores)
+                distr_pairs = itertools.combinations(distributions, 2)
+                js_distances = []
+                for distr_pair in distr_pairs:
+                    js_distance = jensenshannon(distr_pair[0], distr_pair[1], axis=1)
+                    if normalize:
+                        js_distance = js_distance / np.average(js_distance)
+                    js_distances.append(js_distance)
+                js_distance = np.average(js_distances, axis=0)
+                scores.append(js_distance)
+        return scores
 
     def rephrase_incrementally(self, text, threshold=1.2, verbose=False, max_attempts=10):
         incrementally_rephrased = text
@@ -374,19 +403,15 @@ class TMaRCo:
         'How should the text "{input}" be adjusted to make it non-{toxic_trait} (e.g. "{rephrased}")?')
     default_system_prompt = "You are a taciturn chatbot for removing {toxic_trait}, harmful and abusive language."
 
-    def reflect(self, input, threshold=1.2, verbose=False, messages=None, user_prompt=default_user_prompt,
+    def reflect(self, texts: list, threshold=1.2, verbose=False, messages=None, user_prompt=default_user_prompt,
                 system_prompt: str = default_system_prompt, chat_model=None, chat_tokenizer=None,
                 toxic_trait="toxic", end_tag="<|", conversation_type: str = 'rephrase', chat_template=None,
-                chain_of_thought: bool = False):
-        scores = self.score(input)
-        mask = self.mask(input, scores=scores, threshold=threshold)
-        rephrased = self.rephrase(input, mask)
-        scores_dict = self.to_dict(input, scores)
-        toxic_words = []
-        for t, s in scores_dict.items():
-            if s > threshold:
-                toxic_words.append("'" + t + "'")
-        scored_words_text = ', '.join(toxic_words)
+                chain_of_thought: bool = False, conditional: bool = True):
+        reflected_outputs = []
+
+        scores = self.score(texts)
+        masks = self.mask(texts, scores=scores, threshold=threshold)
+        rephrased_texts = self.rephrase(texts, masks)
 
         if chat_model is None:
             chat_model = self.base
@@ -402,89 +427,105 @@ class TMaRCo:
 
         converse_pipeline = pipeline("conversational", model=chat_model, tokenizer=chat_tokenizer)
 
-        if conversation_type == 'chat':
-            if messages is None:
-                if chain_of_thought:
-                    system_prompt = system_prompt.format(toxic_trait=toxic_trait)
-                    user1 = 'In the text "{input}", which words are considered {toxic_trait}?'.format(input=input,
-                                                                                                      toxic_trait=toxic_trait)
-                    assistant1 = scored_words_text
-                    user2 = 'How could the text "{input}" be adjusted to make it non-{toxic_trait}?'.format(input=input,
-                                                                                                            toxic_trait=toxic_trait)
-                    user3 = 'How could the text "{input}" be adjusted to make it non-{toxic_trait}?'.format(
-                        input=input, toxic_trait=toxic_trait)
-                    messages = [
-                        {
-                            "role": "system",
-                            "content": system_prompt,
-                        },
-                        {
-                            "role": "user",
-                            "content": user1
-                        },
-                        {
-                            "role": "assistant",
-                            "content": assistant1
-                        },
-                        {
-                            "role": "user",
-                            "content": user2
-                        },
-                        {
-                            "role": "assistant",
-                            "content": rephrased
-                        },
-                        {
-                            "role": "user",
-                            "content": user3
-                        },
-                    ]
-                else:
-                    user_prompt = user_prompt.format(input=input, scored_words_text=scored_words_text,
-                                                     rephrased=rephrased, toxic_trait=toxic_trait)
-                    system_prompt = system_prompt.format(toxic_trait=toxic_trait)
-                    messages = [
-                        {
-                            "role": "system",
-                            "content": system_prompt,
-                        },
-                        {
-                            "role": "user",
-                            "content": user_prompt
-                        },
-                    ]
+        for text_id in range(len(texts)):
+            text = texts[text_id]
+            scores_current = scores[text_id]
+            if len(text.strip()) == 0 or (conditional and min(scores_current) < threshold):
+                reflected_outputs.append(text)
             else:
-                formatted_messages = []
-                for message in messages:
-                    formatted_messages.append(message.format(input=input, scored_words_text=scored_words_text,
-                                                             rephrased=rephrased, toxic_trait=toxic_trait))
-                messages = formatted_messages
-            conversation_output = converse_pipeline(messages, pad_token_id=converse_pipeline.tokenizer.eos_token_id)
-            if verbose:
-                print(f'chat conversation:\n{conversation_output}')
-            reflected_texts = [conversation_output.messages[-1]['content']]
-        elif conversation_type == 'rephrase':
-            user_prompt = f"Make sure the text '{input}' doesn't contain {toxic_trait} content.\n"
-            rephrase_command = "You may rephrase it as"
-            user_prompt += f"The following words are {toxic_trait}: {scored_words_text}. "
-            user_prompt += rephrase_command + f" '{rephrased}'."
-            reflection_conversation = Conversation(user_prompt)
-            reflected_output = converse_pipeline([reflection_conversation],
-                                                 pad_token_id=converse_pipeline.tokenizer.eos_token_id)
-            if verbose:
-                print(f'{reflected_output}')
-            reflected_texts = []
-            for generated_response in reflected_output.generated_responses:
-                if rephrase_command in generated_response and end_tag in generated_response:
-                    start_index = generated_response.index(rephrase_command) + len(rephrase_command)
-                    end_index = generated_response.index(end_tag, start_index)
-                    if 0 < start_index < end_index:
-                        gras = generated_response[start_index:end_index]
-                        reflected_texts.append(gras)
+                scores_dict = self.to_dict(text, scores_current)
+                toxic_words = []
+                for t, s in scores_dict.items():
+                    if s > threshold:
+                        toxic_words.append("'" + t + "'")
+                scored_words_text = ', '.join(toxic_words)
+                rephrased_text = rephrased_texts[text_id]
+                if conversation_type == 'chat':
+                    if messages is None:
+                        if chain_of_thought:
+                            system_prompt = system_prompt.format(toxic_trait=toxic_trait)
+                            user1 = 'In the text "{input}", which words are considered {toxic_trait}?'.format(
+                                input=text,
+                                toxic_trait=toxic_trait)
+                            assistant1 = scored_words_text
+                            user2 = 'How could the text "{input}" be adjusted to make it non-{toxic_trait}?'.format(
+                                input=text,
+                                toxic_trait=toxic_trait)
+                            user3 = 'How could the text "{input}" be adjusted to make it non-{toxic_trait}?'.format(
+                                input=text, toxic_trait=toxic_trait)
+                            formatted_messages = [
+                                {
+                                    "role": "system",
+                                    "content": system_prompt,
+                                },
+                                {
+                                    "role": "user",
+                                    "content": user1
+                                },
+                                {
+                                    "role": "assistant",
+                                    "content": assistant1
+                                },
+                                {
+                                    "role": "user",
+                                    "content": user2
+                                },
+                                {
+                                    "role": "assistant",
+                                    "content": rephrased_text
+                                },
+                                {
+                                    "role": "user",
+                                    "content": user3
+                                },
+                            ]
+                        else:
+                            user_prompt = user_prompt.format(input=text, scored_words_text=scored_words_text,
+                                                             rephrased=rephrased_text, toxic_trait=toxic_trait)
+                            system_prompt = system_prompt.format(toxic_trait=toxic_trait)
+                            formatted_messages = [
+                                {
+                                    "role": "system",
+                                    "content": system_prompt,
+                                },
+                                {
+                                    "role": "user",
+                                    "content": user_prompt
+                                },
+                            ]
                     else:
-                        reflected_texts.append(generated_response)
+                        formatted_messages = []
+                        for message in messages:
+                            formatted_messages.append(message.format(input=text, scored_words_text=scored_words_text,
+                                                                     rephrased=rephrased_text, toxic_trait=toxic_trait))
+                    conversation_output = converse_pipeline(formatted_messages,
+                                                            pad_token_id=converse_pipeline.tokenizer.eos_token_id)
+                    if verbose:
+                        print(f'chat conversation:\n{conversation_output}')
+                    reflected_texts = [conversation_output.messages[-1]['content']]
+                elif conversation_type == 'rephrase':
+                    user_prompt = f"Make sure the text '{text}' doesn't contain {toxic_trait} content.\n"
+                    rephrase_command = "You may rephrase it as"
+                    user_prompt += f"The following words are {toxic_trait}: {scored_words_text}. "
+                    user_prompt += rephrase_command + f" '{rephrased_text}'."
+                    reflection_conversation = Conversation(user_prompt)
+                    reflected_output = converse_pipeline([reflection_conversation],
+                                                         pad_token_id=converse_pipeline.tokenizer.eos_token_id)
+                    if verbose:
+                        print(f'{reflected_output}')
+                    reflected_texts = []
+                    for generated_response in reflected_output.generated_responses:
+                        if rephrase_command in generated_response and end_tag in generated_response:
+                            start_index = generated_response.index(rephrase_command) + len(rephrase_command)
+                            end_index = generated_response.index(end_tag, start_index)
+                            if 0 < start_index < end_index:
+                                gras = generated_response[start_index:end_index]
+                                reflected_texts.append(gras)
+                            else:
+                                reflected_texts.append(generated_response)
+                        else:
+                            reflected_texts.append(generated_response)
                 else:
-                    reflected_texts.append(generated_response)
-        else:
-            raise Exception(f"unsupported conversation type '{conversation_type}'")
-        return reflected_texts
+                    raise Exception(f"unsupported conversation type '{conversation_type}'")
+                reflected_outputs.append(reflected_texts[0])
+        return reflected_outputs

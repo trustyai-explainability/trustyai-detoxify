@@ -36,12 +36,12 @@ if __name__ == '__main__':
             if data[c].dtype != np.number:
                 value = nr[c]
                 if kind == 'rephrase':
-                    detoxified = tmarco.rephrase(value, tmarco.mask(value), combine_original=True)
+                    detoxified = tmarco.rephrase([value], combine_original=True)[0]
                 elif kind == 'reflect':
                     if chat_model is not None:
-                        detoxified = tmarco.reflect(value, chat_model=chat_model, conversation_type='chat')[0]
+                        detoxified = tmarco.reflect([value], chat_model=chat_model, conversation_type='chat')[0]
                     else:
-                        detoxified = tmarco.reflect(value)[0]
+                        detoxified = tmarco.reflect([value])[0]
                 else:
                     raise Exception(f'unexpected kind "{kind}"')
                 nr[c] = detoxified
