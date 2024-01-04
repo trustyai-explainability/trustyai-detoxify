@@ -237,7 +237,7 @@ class TMaRCo:
         for in_idx in range(len(originals)):
             original = originals[in_idx]
             if conditional:
-                if min(scores) <= threshold:
+                if min(scores[in_idx]) <= threshold:
                     # do not rephrase if all scores are below the threshold
                     rephrased_texts.append(original)
                     continue

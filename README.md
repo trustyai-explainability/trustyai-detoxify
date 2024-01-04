@@ -29,16 +29,16 @@ tmarco.load_models(["trustyai/gminus", "trustyai/gplus"])
 text = "Stand by me, just as long as you fucking stand by me"
 
 # generate T-MaRCo disagreement scores
-scores = tmarco.score(text) # '[0.78664607 0.06622718 0.02403926 5.331921 0.49842355 0.46609956 0.22441313 0.43487906 0.51990145 1.9062967  0.64200985 0.30269763 1.7964466 ]' 
+scores = tmarco.score([text]) # '[0.78664607 0.06622718 0.02403926 5.331921 0.49842355 0.46609956 0.22441313 0.43487906 0.51990145 1.9062967  0.64200985 0.30269763 1.7964466 ]' 
 
 # mask tokens having high disagreement scores
-masked_text = tmarco.mask(text, scores=scores) # 'Stand by me<mask> just as long as you<mask> stand by<mask>'
+masked_text = tmarco.mask([text], scores=scores) # 'Stand by me<mask> just as long as you<mask> stand by<mask>'
 
 # rephrase masked tokens
-rephrased = tmarco.rephrase(text, masked_text) # 'Stand by me and just as long as you want stand by me''
+rephrased = tmarco.rephrase([text], [masked_text]) # 'Stand by me and just as long as you want stand by me''
 
 # combine rephrasing and a base model self-reflection capabilities
-reflected = tmarco.reflect(text) # '["'Stand by me in the way I want stand by you and in the ways I need you to standby me'."]'
+reflected = tmarco.reflect([text]) # '["'Stand by me in the way I want stand by you and in the ways I need you to standby me'."]'
 
 ```
 
