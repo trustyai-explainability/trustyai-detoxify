@@ -236,13 +236,12 @@ class TMaRCo:
             masked_outputs = self.mask(originals, scores=scores)
         for in_idx in range(len(originals)):
             original = originals[in_idx]
-            if conditional:
-                if min(scores[in_idx]) <= threshold:
-                    # do not rephrase if all scores are below the threshold
-                    rephrased_texts.append(original)
-                    continue
             if len(original.strip()) == 0:
                 rephrased_texts.append(original)
+            elif conditional and max(scores[in_idx]) <= threshold:
+                # do not rephrase if all scores are below the threshold
+                rephrased_texts.append(original)
+                continue
             else:
                 base_logits = self.compute_mask_logits(self.base, original, mask=False)
                 rephrased_tokens_ids = []
@@ -411,7 +410,7 @@ class TMaRCo:
 
         scores = self.score(texts)
         masks = self.mask(texts, scores=scores, threshold=threshold)
-        rephrased_texts = self.rephrase(texts, masks)
+        rephrased_texts = self.rephrase(texts, scores=scores, masked_outputs=masks)
 
         if chat_model is None:
             chat_model = self.base
@@ -430,7 +429,7 @@ class TMaRCo:
         for text_id in range(len(texts)):
             text = texts[text_id]
             scores_current = scores[text_id]
-            if len(text.strip()) == 0 or (conditional and min(scores_current) < threshold):
+            if len(text.strip()) == 0 or (conditional and max(scores_current) < threshold):
                 reflected_outputs.append(text)
             else:
                 scores_dict = self.to_dict(text, scores_current)
