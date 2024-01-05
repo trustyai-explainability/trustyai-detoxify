@@ -24,6 +24,7 @@ parser.add_argument("--num_samples", default=400, type=int, help="Number of samp
 parser.add_argument("--context_length", default=2000, type=int, help="Number of samples")
 parser.add_argument("--max_new_tokens", default=30, type=int, help="Max new tokens for generation")
 parser.add_argument("--tmarco_weights", type=float, nargs='+', default=[-0.9, 2.5], help="TMarco expert weights")
+parser.add_argument("--tmarco_threshold", type=float, default=1.2, help="TMarco disagreement threshold")
 parser.add_argument("--tmarco_chat_model", type=str, default="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
                     help="TMarco chat model")
 args = parser.parse_args()
@@ -88,6 +89,7 @@ writer.writerow(["model_id", "mean_toxicity", "std_toxicity"])
 tmarco = TMaRCo(expert_weights=args.tmarco_weights)
 tmarco.load_models(["trustyai/gminus", "trustyai/gplus"])
 tmarco_chat_model = args.tmarco_chat_model
+tmarco_threshold = args.tmarco_threshold
 
 for model_id in tqdm(MODELS_TO_TEST):
     model = AutoModelForCausalLM.from_pretrained(model_id, device_map={"": device}, torch_dtype=torch.bfloat16)
@@ -125,7 +127,8 @@ for model_id in tqdm(MODELS_TO_TEST):
             toxicities[model_id].extend(toxicity_score["toxicity"])
 
             # rephrsed model toxicity
-            rephrased_toxicity_score = toxicity.compute(predictions=tmarco.rephrase(generated_texts))
+            rephrased_toxicity_score = toxicity.compute(
+                predictions=tmarco.rephrase(generated_texts, threshold=tmarco_threshold))
 
             if model_id + '_rephrased' not in toxicities:
                 toxicities[model_id + '_rephrased'] = []
@@ -133,14 +136,15 @@ for model_id in tqdm(MODELS_TO_TEST):
 
             # rephrsed-combine model toxicity
             rephrased_combined_toxicity_score = toxicity.compute(
-                predictions=tmarco.rephrase(generated_texts, combine_original=True))
+                predictions=tmarco.rephrase(generated_texts, combine_original=True, threshold=tmarco_threshold))
 
             if model_id + '_rephrased_combine' not in toxicities:
                 toxicities[model_id + '_rephrased_combine'] = []
             toxicities[model_id + '_rephrased_combine'].extend(rephrased_combined_toxicity_score["toxicity"])
 
             # reflected model toxicity
-            reflected_toxicity_score = toxicity.compute(predictions=tmarco.reflect(generated_texts))
+            reflected_toxicity_score = toxicity.compute(
+                predictions=tmarco.reflect(generated_texts, threshold=tmarco_threshold))
 
             if model_id + '_reflected' not in toxicities:
                 toxicities[model_id + '_reflected'] = []
@@ -148,7 +152,7 @@ for model_id in tqdm(MODELS_TO_TEST):
 
             # reflected chat model toxicity
             reflected_chat_toxicity_score = toxicity.compute(
-                predictions=tmarco.reflect(generated_texts, conversation_type='chat'))
+                predictions=tmarco.reflect(generated_texts, conversation_type='chat', threshold=tmarco_threshold))
 
             if model_id + '_reflected_chat' not in toxicities:
                 toxicities[model_id + '_reflected_chat'] = []
@@ -156,7 +160,8 @@ for model_id in tqdm(MODELS_TO_TEST):
 
             # reflected chat custom model toxicity
             reflected_chat_custom_toxicity_score = toxicity.compute(
-                predictions=tmarco.reflect(generated_texts, conversation_type='chat', chat_model=tmarco_chat_model))
+                predictions=tmarco.reflect(generated_texts, conversation_type='chat', chat_model=tmarco_chat_model,
+                                           threshold=tmarco_threshold))
 
             if model_id + '_reflected_chat_custom' not in toxicities:
                 toxicities[model_id + '_reflected_chat_custom'] = []
@@ -165,13 +170,12 @@ for model_id in tqdm(MODELS_TO_TEST):
             # reflected chat custom cot model toxicity
             reflected_chat_custom_cot_toxicity_score = toxicity.compute(
                 predictions=tmarco.reflect(generated_texts, conversation_type='chat', chat_model=tmarco_chat_model,
-                                           chain_of_thought=True))
+                                           chain_of_thought=True, threshold=tmarco_threshold))
 
             if model_id + '_reflected_chat_custom_cot' not in toxicities:
                 toxicities[model_id + '_reflected_chat_custom_cot'] = []
             toxicities[model_id + '_reflected_chat_custom_cot'].extend(
                 reflected_chat_custom_cot_toxicity_score["toxicity"])
-
 
     # last batch
     inputs = tokenizer(input_texts, return_tensors="pt", padding=True).to(device)
@@ -186,7 +190,8 @@ for model_id in tqdm(MODELS_TO_TEST):
     toxicities[model_id].extend(toxicity_score["toxicity"])
 
     # rephrsed model toxicity
-    rephrased_toxicity_score = toxicity.compute(predictions=tmarco.rephrase(generated_texts))
+    rephrased_toxicity_score = toxicity.compute(
+        predictions=tmarco.rephrase(generated_texts, threshold=tmarco_threshold))
 
     if model_id + '_rephrased' not in toxicities:
         toxicities[model_id + '_rephrased'] = []
@@ -194,14 +199,14 @@ for model_id in tqdm(MODELS_TO_TEST):
 
     # rephrsed-combine model toxicity
     rephrased_combined_toxicity_score = toxicity.compute(
-        predictions=tmarco.rephrase(generated_texts, combine_original=True))
+        predictions=tmarco.rephrase(generated_texts, combine_original=True, threshold=tmarco_threshold))
 
     if model_id + '_rephrased_combine' not in toxicities:
         toxicities[model_id + '_rephrased_combine'] = []
     toxicities[model_id + '_rephrased_combine'].extend(rephrased_combined_toxicity_score["toxicity"])
 
     # reflected model toxicity
-    reflected_toxicity_score = toxicity.compute(predictions=tmarco.reflect(generated_texts))
+    reflected_toxicity_score = toxicity.compute(predictions=tmarco.reflect(generated_texts, threshold=tmarco_threshold))
 
     if model_id + '_reflected' not in toxicities:
         toxicities[model_id + '_reflected'] = []
@@ -209,7 +214,7 @@ for model_id in tqdm(MODELS_TO_TEST):
 
     # reflected chat model toxicity
     reflected_chat_toxicity_score = toxicity.compute(
-        predictions=tmarco.reflect(generated_texts, conversation_type='chat'))
+        predictions=tmarco.reflect(generated_texts, conversation_type='chat', threshold=tmarco_threshold))
 
     if model_id + '_reflected_chat' not in toxicities:
         toxicities[model_id + '_reflected_chat'] = []
@@ -217,7 +222,8 @@ for model_id in tqdm(MODELS_TO_TEST):
 
     # reflected chat custom model toxicity
     reflected_chat_custom_toxicity_score = toxicity.compute(
-        predictions=tmarco.reflect(generated_texts, conversation_type='chat', chat_model=tmarco_chat_model))
+        predictions=tmarco.reflect(generated_texts, conversation_type='chat', chat_model=tmarco_chat_model,
+                                   threshold=tmarco_threshold))
 
     if model_id + '_reflected_chat_custom' not in toxicities:
         toxicities[model_id + '_reflected_chat_custom'] = []
@@ -226,14 +232,15 @@ for model_id in tqdm(MODELS_TO_TEST):
     # reflected chat custom cot model toxicity
     reflected_chat_custom_cot_toxicity_score = toxicity.compute(
         predictions=tmarco.reflect(generated_texts, conversation_type='chat', chat_model=tmarco_chat_model,
-                                   chain_of_thought=True))
+                                   chain_of_thought=True, threshold=tmarco_threshold))
 
     if model_id + '_reflected_chat_custom_cot' not in toxicities:
         toxicities[model_id + '_reflected_chat_custom_cot'] = []
     toxicities[model_id + '_reflected_chat_custom_cot'].extend(
         reflected_chat_custom_cot_toxicity_score["toxicity"])
 
-    for mid in [model_id, model_id + '_reflected', model_id + '_reflected_chat', model_id + '_reflected_chat_custom',
+    for mid in [model_id, model_id + '_rephrased', model_id + '_rephrased_combine', model_id + '_reflected',
+                model_id + '_reflected_chat', model_id + '_reflected_chat_custom',
                 model_id + '_reflected_chat_custom_cot']:
         # compute mean & std using np
         mean = np.mean(toxicities[mid])
