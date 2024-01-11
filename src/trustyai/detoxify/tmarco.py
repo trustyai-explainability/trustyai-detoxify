@@ -380,7 +380,8 @@ class TMaRCo:
             if min(scores) > threshold:
                 break
             masked = self.mask(text, scores=scores, threshold=threshold)
-            incrementally_rephrased = self.rephrase(text, masked, verbose=verbose)
+            incrementally_rephrased = self.rephrase([text], masked_outputs=masked, scores=scores,
+                                                    verbose=verbose)[0]
             if verbose:
                 print(f'step{idx}: {incrementally_rephrased}')
             if text == incrementally_rephrased or idx == max_attempts:

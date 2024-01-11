@@ -11,6 +11,7 @@ if __name__ == '__main__':
     parser.add_argument("--content_feature", type=str, required=True)
     parser.add_argument("--td_columns", type=str, nargs='+', default=None)
     parser.add_argument("--model_prefix", type=str, default='g_')
+    parser.add_argument("--model_type", type=str, default=None)
 
     args = parser.parse_args()
 
@@ -18,10 +19,11 @@ if __name__ == '__main__':
     data_dir = args.data_dir
     perc = args.perc
     td_columns = args.td_columns
+    model_type = args.model_type
 
     target_feature = args.target_feature
     content_feature = args.content_feature
     model_prefix = args.model_prefix
     tmarco = TMaRCo()
     tmarco.train_models(perc=perc, dataset_name=dataset_name, expert_feature=target_feature, model_prefix=model_prefix,
-                        data_dir=data_dir, content_feature=content_feature, td_columns=td_columns)
+                        data_dir=data_dir, content_feature=content_feature, td_columns=td_columns, model_type=model_type)
