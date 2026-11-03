@@ -11,7 +11,6 @@ from datasets import load_dataset
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trustyai.detoxify import TMaRCo
-from trl.import_utils import is_npu_available, is_xpu_available
 
 toxicity = evaluate.load("ybelkada/toxicity", "unitary/toxic-bert", module_type="measurement")
 
@@ -72,10 +71,15 @@ BATCH_SIZE = args.batch_size
 output_file = args.output_file
 max_new_tokens = args.max_new_tokens
 context_length = args.context_length
-if is_xpu_available():
-    device = torch.xpu.current_device()
-elif is_npu_available():
-    device = torch.npu.current_device()
+xpu = getattr(torch, "xpu", None)
+npu = getattr(torch, "npu", None)
+use_xpu = xpu is not None and xpu.is_available()
+use_npu = npu is not None and npu.is_available()
+
+if use_xpu:
+    device = xpu.current_device()
+elif use_npu:
+    device = npu.current_device()
 else:
     device = torch.cuda.current_device() if torch.cuda.is_available() else "cpu"
 
@@ -308,11 +312,11 @@ for model_id in tqdm(MODELS_TO_TEST):
         )
 
     model = None
-    if is_xpu_available():
-        torch.xpu.empty_cache()
-    elif is_npu_available():
-        torch.npu.empty_cache()
-    else:
+    if use_xpu:
+        xpu.empty_cache()
+    elif use_npu:
+        npu.empty_cache()
+    elif torch.cuda.is_available():
         torch.cuda.empty_cache()
 
 # close file
