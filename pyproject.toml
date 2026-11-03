@@ -28,8 +28,7 @@ dependencies = [
     "torch",
     "numpy~=1.24.1",
     "pyarrow<20",
-    "evaluate",
-    "trl"
+    "evaluate"
 ]
 
 [project.optional-dependencies]
